@@ -1,0 +1,2 @@
+com.example.asynccontext.autoconfigure.CommonAsyncContextAutoConfiguration
+com.example.asynccontext.autoconfigure.ContextAwareCompletableFuturesAutoConfiguration
