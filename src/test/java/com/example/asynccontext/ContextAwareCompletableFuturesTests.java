@@ -11,7 +11,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,7 +24,8 @@ class ContextAwareCompletableFuturesTests {
                     CommonAsyncContextAutoConfiguration.class,
                     TaskExecutionAutoConfiguration.class,
                     ContextAwareCompletableFuturesAutoConfiguration.class))
-            .withUserConfiguration(TestUserContextConfiguration.class);
+            .withUserConfiguration(TestUserContextConfiguration.class)
+            .withPropertyValues("spring.task.execution.thread-name-prefix=test-task-");
 
     @AfterEach
     void clearContext() {
@@ -40,6 +43,51 @@ class ContextAwareCompletableFuturesTests {
                     .get(5, TimeUnit.SECONDS);
 
             assertThat(result).isEqualTo("tenant-a");
+        });
+    }
+
+    @Test
+    void runAsyncPropagatesRegisteredThreadLocalContext() {
+        contextRunner.run(context -> {
+            TestUserContext.set("tenant-b");
+
+            ContextAwareCompletableFutures futures = context.getBean(ContextAwareCompletableFutures.class);
+            AtomicReference<String> result = new AtomicReference<>();
+
+            futures.runAsync(() -> result.set(TestUserContext.get()))
+                    .get(5, TimeUnit.SECONDS);
+
+            assertThat(result).hasValue("tenant-b");
+        });
+    }
+
+    @Test
+    void clearsRegisteredThreadLocalContextBetweenTasks() {
+        contextRunner.run(context -> {
+            ContextAwareCompletableFutures futures = context.getBean(ContextAwareCompletableFutures.class);
+
+            TestUserContext.set("tenant-c");
+            String firstResult = futures.supplyAsync(TestUserContext::get)
+                    .get(5, TimeUnit.SECONDS);
+
+            TestUserContext.clear();
+            String secondResult = futures.supplyAsync(TestUserContext::get)
+                    .get(5, TimeUnit.SECONDS);
+
+            assertThat(firstResult).isEqualTo("tenant-c");
+            assertThat(secondResult).isNull();
+        });
+    }
+
+    @Test
+    void exposesBootManagedExecutor() {
+        contextRunner.run(context -> {
+            ContextAwareCompletableFutures futures = context.getBean(ContextAwareCompletableFutures.class);
+
+            CompletableFuture<String> result = futures.supplyAsync(() -> Thread.currentThread().getName());
+
+            assertThat(result.get(5, TimeUnit.SECONDS)).startsWith("test-task-");
+            assertThat(futures.executor()).isSameAs(context.getBean("applicationTaskExecutor"));
         });
     }
 
